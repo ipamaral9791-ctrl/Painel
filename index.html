@@ -53,27 +53,33 @@ async function carregar(){
   if(!r.ok) throw new Error('painel');
   P = await r.json(); return P;
 }
-async function decifrar(bits){
-  await carregar();
+async function decifrar(bits, obj){
+  const Q = obj || await carregar();
   const aes = await crypto.subtle.importKey('raw', bits.slice(0,32), 'AES-CBC', false, ['decrypt']);
   const mac = await crypto.subtle.importKey('raw', bits.slice(32,64), {name:'HMAC',hash:'SHA-256'}, false, ['verify']);
-  const iv = b64(P.iv), ct = b64(P.ct), msg = new Uint8Array(iv.length+ct.length); msg.set(iv); msg.set(ct, iv.length);
-  if(!await crypto.subtle.verify('HMAC', mac, b64(P.mac), msg)) throw new Error('senha');
+  const iv = b64(Q.iv), ct = b64(Q.ct), msg = new Uint8Array(iv.length+ct.length); msg.set(iv); msg.set(ct, iv.length);
+  if(!await crypto.subtle.verify('HMAC', mac, b64(Q.mac), msg)) throw new Error('senha');
   return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-CBC', iv}, aes, ct));
+}
+async function carregarVendas(bits){ // vendas mais novas lidas pelo robô na nuvem (opcional: se faltar ou falhar, o painel abre normalmente)
+  try{ const r = await fetch('vendas.json?t=' + Date.now(), {cache: 'no-store'}); if(!r.ok) return null; return JSON.parse(await decifrar(bits, await r.json())); }
+  catch(e){ return null; }
 }
 async function chaveDaSenha(pw){
   await carregar();
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
   return new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:b64(P.salt), iterations:P.iter}, base, 512));
 }
-function mostrar(html){
-  const f = document.createElement('iframe'); f.title = 'Painel Gerencial'; f.srcdoc = html;
+function mostrar(html, vendas){
+  const f = document.createElement('iframe'); f.title = 'Painel Gerencial';
+  if(vendas){ f.addEventListener('load', () => { try{ if(f.contentWindow.__aplicarVendas) f.contentWindow.__aplicarVendas(vendas); }catch(e){} }); }
+  f.srcdoc = html;
   document.body.append(f); $('#cofre').hidden = true; document.body.dataset.estado = 'aberto'; document.title = 'Painel Concessionárias';
 }
 async function abrirComSenha(pw, lembrar){
   const bits = await chaveDaSenha(pw), html = await decifrar(bits);
   if(lembrar){ try{ localStorage.setItem('cofre_k', b64s(bits)); }catch(e){} }
-  mostrar(html);
+  mostrar(html, await carregarVendas(bits));
 }
 $('#f').addEventListener('submit', async e => {
   e.preventDefault(); const b = $('#ok'), m = $('#msg'); b.disabled = true; m.textContent = 'Abrindo...'; m.style.color = 'var(--mut)';
@@ -81,7 +87,7 @@ $('#f').addEventListener('submit', async e => {
   catch(err){ document.body.dataset.estado = 'erro'; m.style.color = 'var(--bad)'; m.textContent = (err && err.message === 'senha') ? 'Senha incorreta.' : 'Não foi possível carregar o painel. Tente de novo.'; b.disabled = false; $('#pw').select(); }
 });
 (async () => { // aparelho que já abriu com "lembrar": tenta a chave guardada; se a senha mudou, volta ao pedido de senha
-  try{ const k = localStorage.getItem('cofre_k'); if(k){ mostrar(await decifrar(b64(k))); return; } }
+  try{ const k = localStorage.getItem('cofre_k'); if(k){ const bits = b64(k), html = await decifrar(bits); mostrar(html, await carregarVendas(bits)); return; } }
   catch(e){ if(e && e.message === 'senha'){ try{ localStorage.removeItem('cofre_k'); }catch(e2){} } }
   /*AUTO*/
 })();
