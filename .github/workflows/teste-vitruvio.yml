@@ -1,0 +1,25 @@
+name: Teste leitura Vitruvio
+on: workflow_dispatch
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ler o painel publico do Vitruvio (so imprime contagens)
+        env:
+          VITRUVIO_URL: ${{ secrets.VITRUVIO_URL }}
+        run: |
+          test -n "$VITRUVIO_URL" || { echo "Segredo VITRUVIO_URL nao cadastrado"; exit 1; }
+          google-chrome --headless=new --no-sandbox --disable-gpu --virtual-time-budget=20000 --dump-dom "$VITRUVIO_URL" > dom.html 2>/dev/null || true
+          python3 - <<'PY'
+          import re, html
+          t = open('dom.html', encoding='utf-8', errors='ignore').read()
+          print('tamanho do DOM:', len(t))
+          print('tela de login?', ('Bem-vindo' in t) and ('Senha' in t))
+          n = 0; tot = False
+          for r in re.findall(r'(?s)<tr[^>]*>(.*?)</tr>', t):
+              cel = [re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', '', c))).strip() for c in re.findall(r'(?s)<t[dh][^>]*>(.*?)</t[dh]>', r)]
+              if len(cel) >= 5 and re.match(r'^\d+\s*\|\s*(.+?)\s*[-–]\s*[0-9A-Z]{3}$', cel[0]): n += 1
+              elif len(cel) >= 5 and cel[0] == 'TOTAL': tot = True
+          print('unidades lidas:', n, '| linha TOTAL:', tot)
+          if n < 10: raise SystemExit('Leitura insuficiente: menos de 10 unidades')
+          PY
