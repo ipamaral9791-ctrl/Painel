@@ -1,0 +1,35 @@
+name: Vendas Vitruvio
+on:
+  schedule:
+    - cron: '5,35 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: vendas
+  cancel-in-progress: false
+jobs:
+  vendas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install cryptography
+      - name: Ler vendas (so imprime contagens)
+        env:
+          VITRUVIO_URL: ${{ secrets.VITRUVIO_URL }}
+          PAINEL_SENHA: ${{ secrets.PAINEL_SENHA }}
+        run: python3 robo/vendas.py
+      - name: Publicar se mudou
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$(git status --porcelain vendas.json)" ]; then
+            git config user.name "robo-vendas"
+            git config user.email "robo-vendas@users.noreply.github.com"
+            git add vendas.json
+            git commit -m "Vendas $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase
+            git push
+            gh api -X POST "repos/${{ github.repository }}/pages/builds" || true
+          fi
