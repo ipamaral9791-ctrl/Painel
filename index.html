@@ -70,16 +70,43 @@ async function chaveDaSenha(pw){
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
   return new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:b64(P.salt), iterations:P.iter}, base, 512));
 }
+let BITS = null, CT = null, ATU = false;   // chave da sessão e versão do painel que está na tela (para a atualização automática)
 function mostrar(html, vendas){
   const f = document.createElement('iframe'); f.title = 'Painel Gerencial';
   if(vendas){ f.addEventListener('load', () => { try{ if(f.contentWindow.__aplicarVendas) f.contentWindow.__aplicarVendas(vendas); }catch(e){} }); }
   f.srcdoc = html;
   document.body.append(f); $('#cofre').hidden = true; document.body.dataset.estado = 'aberto'; document.title = 'Painel Concessionárias';
+  CT = P && P.ct;
 }
+// Atualização automática: a cada 3 min e quando você volta para a aba, confere se há publicação nova (painel.json) e, se houver, troca o painel
+// mantendo a seção, o mês, o filtro e a rolagem em que você estava. Se algo falhar, não faz nada (o painel atual continua na tela).
+const LER_ESTADO = 'JSON.stringify({rota:rota,mesSel:mesSel,sel:[...sel],repAba:repAba,repMes:repMes,repSel:repSel,repSelI:repSelI,repSelV:repSelV,finAba:finAba,finPer:finPer,finConc:finConc,finSit:finSit,campAba:campAba,y:window.scrollY})';
+const volta = s => '(function(s){ try{ mesSel=s.mesSel; sel=new Set(s.sel); repAba=s.repAba; repMes=s.repMes; repSel=s.repSel; repSelI=s.repSelI; repSelV=s.repSelV; finAba=s.finAba; finPer=s.finPer; finConc=s.finConc; finSit=s.finSit; campAba=s.campAba; if(s.rota){ location.hash=s.rota; } else { render(); } setTimeout(function(){ window.scrollTo(0,s.y); }, 150); }catch(e){} })(' + s + ')';
+async function atualizarPainel(){
+  if(ATU || !BITS || document.body.dataset.estado !== 'aberto') return;
+  ATU = true;
+  try{
+    const r = await fetch('painel.json?t=' + Date.now(), {cache: 'no-store'}); if(!r.ok) return;
+    const Q = await r.json(), vendas = await carregarVendas(BITS), velho = document.querySelector('iframe');
+    if(Q.ct === CT){ try{ if(vendas && velho && velho.contentWindow.__aplicarVendas) velho.contentWindow.__aplicarVendas(vendas); }catch(e){} return; }
+    const html = await decifrar(BITS, Q);
+    let st = null; try{ st = velho.contentWindow.eval(LER_ESTADO); }catch(e){}
+    const f = document.createElement('iframe'); f.title = 'Painel Gerencial';
+    f.addEventListener('load', () => {
+      try{ if(st) f.contentWindow.eval(volta(st)); }catch(e){}
+      try{ if(vendas && f.contentWindow.__aplicarVendas) f.contentWindow.__aplicarVendas(vendas); }catch(e){}
+      if(velho) velho.remove();
+    });
+    f.srcdoc = html; document.body.append(f); P = Q; CT = Q.ct;
+  }catch(e){} finally{ ATU = false; }
+}
+setInterval(atualizarPainel, 180000);
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') atualizarPainel(); });
+addEventListener('focus', atualizarPainel);
 async function abrirComSenha(pw, lembrar){
   const bits = await chaveDaSenha(pw), html = await decifrar(bits);
   if(lembrar){ try{ localStorage.setItem('cofre_k', b64s(bits)); }catch(e){} }
-  mostrar(html, await carregarVendas(bits));
+  BITS = bits; mostrar(html, await carregarVendas(bits));
 }
 $('#f').addEventListener('submit', async e => {
   e.preventDefault(); const b = $('#ok'), m = $('#msg'); b.disabled = true; m.textContent = 'Abrindo...'; m.style.color = 'var(--mut)';
@@ -87,7 +114,7 @@ $('#f').addEventListener('submit', async e => {
   catch(err){ document.body.dataset.estado = 'erro'; m.style.color = 'var(--bad)'; m.textContent = (err && err.message === 'senha') ? 'Senha incorreta.' : 'Não foi possível carregar o painel. Tente de novo.'; b.disabled = false; $('#pw').select(); }
 });
 (async () => { // aparelho que já abriu com "lembrar": tenta a chave guardada; se a senha mudou, volta ao pedido de senha
-  try{ const k = localStorage.getItem('cofre_k'); if(k){ const bits = b64(k), html = await decifrar(bits); mostrar(html, await carregarVendas(bits)); return; } }
+  try{ const k = localStorage.getItem('cofre_k'); if(k){ const bits = b64(k), html = await decifrar(bits); BITS = bits; mostrar(html, await carregarVendas(bits)); return; } }
   catch(e){ if(e && e.message === 'senha'){ try{ localStorage.removeItem('cofre_k'); }catch(e2){} } }
   /*AUTO*/
 })();
