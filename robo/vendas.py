@@ -53,10 +53,12 @@ def ler_painel():
             dom = r.stdout
         except subprocess.TimeoutExpired:
             dom = ''
-        unidades, total = {}, None
+        unidades, total, dia = {}, None, None
         for tr in re.findall(r'(?s)<tr[^>]*>(.*?)</tr>', dom):
             cel = [re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', '', c))).strip()
                    for c in re.findall(r'(?s)<t[dh][^>]*>(.*?)</t[dh]>', tr)]
+            if len(cel) >= 3 and re.match(r'^VENDAS\s*DO\s*DIA', cel[1]):
+                dia = to_num(cel[2])
             if len(cel) >= 5:
                 m = re.match(r'^\d+\s*\|\s*(.+?)\s*[-–]\s*[0-9A-Z]{3}$', cel[0])
                 if m:
@@ -65,7 +67,7 @@ def ler_painel():
                     total = {'cotas': to_num(cel[2]), 'credito': to_num(cel[3])}
         print(f'tentativa {tent}: {len(unidades)} unidades no painel; TOTAL: {total is not None}')
         if len(unidades) >= 10 and total:
-            return unidades, total
+            return unidades, total, dia
     sys.exit('Leitura insuficiente do painel do Vitruvio (menos de 10 unidades).')
 
 
@@ -104,7 +106,7 @@ def main():
     except Exception as e:
         sys.exit(f'painel.json indisponível para obter o sal ({type(e).__name__}).')
 
-    unidades, total = ler_painel()
+    unidades, total, dia = ler_painel()
     mapeadas = {MAPAN[k]: v for k, v in unidades.items() if k in MAPAN and v['cotas'] is not None and v['credito'] is not None}
     print(f'unidades mapeadas para o dashboard: {len(mapeadas)}')
     if len(mapeadas) < 10:
@@ -112,13 +114,13 @@ def main():
 
     agora = datetime.now(ZoneInfo('America/Sao_Paulo'))
     obj = {'lido': agora.strftime('%Y-%m-%d %H:%M'), 'mes': f'{MESES[agora.month - 1]}/{agora:%y}', 'n': len(unidades),
-           'total': total, 'unidades': mapeadas}
+           'total': total, 'dia': dia, 'unidades': mapeadas}
 
     # nada mudou desde a última leitura? então não grava (evita commits à toa)
     if os.path.exists('vendas.json'):
         try:
             ant = decifrar(json.load(open('vendas.json', encoding='utf-8')))
-            if ant and ant.get('mes') == obj['mes'] and ant.get('total') == total and ant.get('unidades') == mapeadas:
+            if ant and ant.get('mes') == obj['mes'] and ant.get('total') == total and ant.get('dia') == dia and ant.get('unidades') == mapeadas:
                 print('Sem mudança nas vendas; vendas.json mantido.')
                 return
         except Exception:
